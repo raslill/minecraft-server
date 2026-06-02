@@ -289,11 +289,12 @@ void on_client_close(uv_handle_t *handle) {
     // Find and remove them from the players array
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (players[i].active && players[i].net_context == ctx) {
+            // Despawn players from other clients
             PacketDespawnPlayer packet;
             packet.packet_id = 0x0c;
             packet.player_id = i;
             broadcast_packet_others(i, sizeof(PacketDespawnPlayer), &packet);
-            
+
             players[i].active = 0;
             players[i].net_context = NULL;
             
@@ -301,6 +302,14 @@ void on_client_close(uv_handle_t *handle) {
             memcpy(safe_name, players[i].username, 64);
             format_print_string(safe_name);
             printf("Player %s disconnected. Cleaned up slot %d.\n", safe_name, i); 
+            // Send player disconnect message in chat
+            char temp_buf[64];
+            PacketMessage disconnect_message;
+            disconnect_message.packet_id = 0x0d;
+            disconnect_message.player_id = -1;
+            sprintf(temp_buf, "%s left the game!", safe_name);
+            format_classic_string(disconnect_message.message, temp_buf);
+            broadcast_packet_others(i, sizeof(PacketMessage), &disconnect_message);
             break;
         }
     }
@@ -490,7 +499,6 @@ void client_message(client_context_t *ctx, uint8_t *data) {
     // Broadcast message to other players
     PacketMessage packet;
     packet.packet_id = 0x0d;
-    packet.player_id = player_id;
     // Do string formatting!
     // {username}: memcpy Message(64-head) to some string head
     // Get safe username

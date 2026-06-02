@@ -10,6 +10,24 @@
 #define MAX_PLAYERS 32
 #define MAP_VOLUME (256 * 256 *64)
 
+#define COLOR_BLACK     '0'
+#define COLOR_NAVY      '1'
+#define COLOR_GREEN     '2'
+#define COLOR_TEAL      '3'
+#define COLOR_MAROON    '4'
+#define COLOR_PURPLE    '5'
+#define COLOR_GOLD      '6'
+#define COLOR_SILVER    '7'
+#define COLOR_GRAY      '8'
+#define COLOR_BLUE      '9'
+#define COLOR_LIME      'a'
+#define COLOR_AQUA      'b'
+#define COLOR_RED       'c'
+#define COLOR_PINK      'd'
+#define COLOR_YELLOW    'e'
+#define COLOR_WHITE     'f'
+
+
 typedef struct {
     uv_tcp_t handle;
     uint8_t buffer[1024]; 
@@ -85,7 +103,7 @@ typedef struct {
     uint8_t player_id;
     uint16_t x,y,z;
     uint8_t yaw, pitch;
-} PacketPositionAndOrientation; // Player teleport
+} PacketPositionAndOrientation; // Player move
 
 typedef struct {
     uint8_t packet_id;
@@ -238,9 +256,27 @@ void send_packet(client_context_t *ctx, size_t packet_size, void* packet) {
     uv_write(write_req, (uv_stream_t*)&ctx->handle, &uv_buf, 1, on_write);
 }
 
-void broadcast_packet(int player_id, size_t packet_size, void *packet) {
+int get_player_id(client_context_t *ctx) {
+    for(int i = 0; i < MAX_PLAYERS; i++) {
+        if(players[i].net_context == ctx)
+        return i;
+    }
+    // Something went wrong
+    fprintf(stderr, "Player ID not found!");
+    return 0;
+}
+
+void broadcast_packet_others(int player_id, size_t packet_size, void *packet) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if(i != player_id && players[i].active) {
+            send_packet(players[i].net_context, packet_size, packet);
+        }
+    }
+}
+
+void broadcast_packet_all(size_t packet_size, void *packet) {
+    for(int i = 0; i < MAX_PLAYERS; i++) {
+        if(players[i].active) {            
             send_packet(players[i].net_context, packet_size, packet);
         }
     }
@@ -256,7 +292,7 @@ void on_client_close(uv_handle_t *handle) {
             PacketDespawnPlayer packet;
             packet.packet_id = 0x0c;
             packet.player_id = i;
-            broadcast_packet(i, sizeof(PacketDespawnPlayer), &packet);
+            broadcast_packet_others(i, sizeof(PacketDespawnPlayer), &packet);
             
             players[i].active = 0;
             players[i].net_context = NULL;
@@ -328,6 +364,7 @@ void set_player_position(client_context_t *ctx, uint8_t player_id, uint16_t x, u
 }
 
 void broadcast_player_join(int player_id) {
+
     for (int i = 0; i < MAX_PLAYERS; i++) {
         // Don't broadcast join to other players
         if(i == player_id) continue;
@@ -359,6 +396,22 @@ void broadcast_player_join(int player_id) {
             send_packet(ctx_p, sizeof(PacketSpawnPlayer), &packet_p);
         }
     }
+    // Announce player join with chat message!
+    /*
+    Color coding at the start of the message will only work if the 
+    player ID byte is less than 127. If it's 127 or higher, 
+    the game automatically adds &e before the message, making it yellow.
+    */
+    PacketMessage join_message;
+    join_message.packet_id = 0x0d;
+    join_message.player_id = -1; // Yellow text
+    char username[64];
+    char message_str[64];
+    memcpy(username, players[player_id].username, 64);
+    format_print_string(username);
+    sprintf(message_str, "%s joined the game!", username);
+    format_classic_string(join_message.message, message_str);
+    broadcast_packet_all(sizeof(PacketMessage), &join_message);
 }
 
 // Pass the raw packet payload rather than the context buffer
@@ -396,9 +449,6 @@ void player_connect(client_context_t *ctx, uint8_t *packet_data) {
             
             // TODO: Broadcast player join to other players
             broadcast_player_join(i);
-
-            // TODO: Send join message to all players
-
             return;
         }
     }
@@ -414,28 +464,50 @@ void player_connect(client_context_t *ctx, uint8_t *packet_data) {
 }
 
 void client_set_block(client_context_t *ctx, uint8_t *data) {
+    // TODO: Alter world array
+    // TODO: Compress world each time player joins
     printf("SETBLOCK\n");
 }
 void client_position(client_context_t *ctx, uint8_t *data) {
     PacketPositionAndOrientation* pos = (PacketPositionAndOrientation*)data;
-    //printf("X: %hu\n",ntohs(pos->x));
-    //printf("Y: %hu\n", ntohs(pos->y));
-    //printf("Z: %hu\n", ntohs(pos->z));
-    uint8_t player_id;
+    uint8_t player_id = get_player_id(ctx); 
+    // Broadcast position to other players
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if(players[i].net_context == ctx) {
-            player_id = i;
-        }
-    }
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        // Broadcast position to other players
         if(players[i].active && players[i].net_context != ctx) {
             set_player_position(players[i].net_context, player_id, pos->x, pos->y, pos->z, pos->yaw, pos->pitch, false);
         }
     }
 }
-void client_message(client_context_t *ctx, uint8_t *data) {}
 
+// Chat messages
+void client_message(client_context_t *ctx, uint8_t *data) {
+    PacketMessage* mes = (PacketMessage*)data;
+    uint8_t player_id = get_player_id(ctx);
+    // Broadcast message to other players
+    PacketMessage packet;
+    packet.packet_id = 0x0d;
+    packet.player_id = player_id;
+    // Do string formatting!
+    // {username}: memcpy Message(64-head) to some string head
+    // Get safe username
+    char message[64];
+    // Copy username to message, get username length, write ':' after username
+    memcpy(message, players[player_id].username, 64);
+    format_print_string(message);
+    // Get length and write to the string character by character
+    // Then append the message at the write head
+    int len = strlen(message);
+    int head = len;
+    message[head++] = ':'; // Set \0 to :, increment head
+    message[head++] = ' ';
+    memcpy(message+head, mes->message, 64-head);
+
+    // Copy message to packet and broadcast packet!
+    memcpy(packet.message, message, 64); 
+    broadcast_packet_all(sizeof(PacketMessage), &packet);
+}
+
+// Handle incoming packages
 void on_read(uv_stream_t *client_stream, ssize_t nread, const uv_buf_t *buf) {
     client_context_t *ctx = (client_context_t*)client_stream->data;
 

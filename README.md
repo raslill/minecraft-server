@@ -6,7 +6,7 @@ Included test map https://osici.github.io/mapdownloads.html
 
 # TODO:
 - Implement: Tick system
-- Implement: Chat
+- Implement: Chat (done)
 - Implement: block placing
 - Implement: Commands
 - Implement: Water/Lava logic

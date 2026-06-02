@@ -407,12 +407,16 @@ void broadcast_player_join(int player_id) {
     join_message.player_id = -1; // Yellow text
     char username[64];
     char message_str[64];
+    char *greet_message = " joined the game!";
     memcpy(username, players[player_id].username, 64);
     format_print_string(username);
-    sprintf(message_str, "%s joined the game!", username);
-    format_classic_string(join_message.message, message_str);
-    broadcast_packet_all(sizeof(PacketMessage), &join_message);
-}
+    // Check username length, could cause buffer overlow otherwise
+    if(strlen(username) < 64-strlen(greet_message)) {
+        sprintf(message_str, "%s%s", username, greet_message);
+        format_classic_string(join_message.message, message_str);
+        broadcast_packet_all(sizeof(PacketMessage), &join_message);    
+    }
+    }
 
 // Pass the raw packet payload rather than the context buffer
 void player_connect(client_context_t *ctx, uint8_t *packet_data) {
